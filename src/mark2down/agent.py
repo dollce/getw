@@ -112,6 +112,72 @@ class FetchResult:
     status: int | None = None
 
 
+class ChallengePageError(RuntimeError):
+    """Raised when the response looks like an interactive bot-challenge page
+    (Cloudflare Turnstile, Akamai bot manager, etc.) rather than real content."""
+
+    def __init__(self, url: str, title: str, status: int | None, vendor: str) -> None:
+        self.url = url
+        self.title = title
+        self.status = status
+        self.vendor = vendor
+        super().__init__(
+            f"Bot challenge detected ({vendor}): title={title!r} status={status}"
+        )
+
+
+# Challenge-page titles observed in the wild. Matched case-insensitively as
+# substrings so we tolerate minor variations ("Just a moment..." vs. "Just a
+# moment").
+_CHALLENGE_TITLE_MARKERS: tuple[tuple[str, str], ...] = (
+    ("just a moment", "Cloudflare"),
+    ("attention required", "Cloudflare"),
+    ("checking your browser", "Cloudflare"),
+    ("access denied", "Cloudflare/Akamai"),
+    ("pardon our interruption", "Imperva"),
+    ("one moment, please", "Akamai"),
+)
+
+# HTML substrings that corroborate a challenge page when combined with a
+# suspicious title + very short extractable body.
+_CHALLENGE_HTML_MARKERS: tuple[str, ...] = (
+    "cf-chl-",
+    "challenge-platform",
+    "cf_chl_opt",
+    "cf-mitigated",
+    "/cdn-cgi/challenge-platform/",
+    "ct.captcha-delivery.com",
+    "_Incapsula_Resource",
+)
+
+
+def _looks_like_challenge(
+    *,
+    title: str,
+    html: str,
+    status: int | None,
+) -> str | None:
+    """Return a vendor string if *html*/*title* looks like a bot-challenge
+    interstitial, otherwise None."""
+    title_lc = (title or "").lower()
+    vendor: str | None = None
+    for marker, v in _CHALLENGE_TITLE_MARKERS:
+        if marker in title_lc:
+            vendor = v
+            break
+    if vendor is None:
+        return None
+    # Require corroboration: either a known challenge fingerprint in the HTML
+    # or a non-200 status. A legitimate page titled "Attention required" (e.g.
+    # a blog post) shouldn't false-positive.
+    html_lc = html.lower() if html else ""
+    if any(m in html_lc for m in _CHALLENGE_HTML_MARKERS):
+        return vendor
+    if status is not None and status in (403, 429, 503):
+        return vendor
+    return None
+
+
 def _install_browsers_if_needed() -> None:
     """Install Chromium the first time the tool is invoked on a machine."""
     cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
@@ -174,10 +240,15 @@ def fetch(
             status = response.status if response else None
             browser.close()
 
+            title = (meta_payload.get("title") or "").strip()
+            vendor = _looks_like_challenge(title=title, html=html, status=status)
+            if vendor is not None:
+                raise ChallengePageError(url=final_url, title=title, status=status, vendor=vendor)
+
             return FetchResult(
                 url=url,
                 final_url=final_url,
-                title=(meta_payload.get("title") or "").strip(),
+                title=title,
                 html=html,
                 lang=(meta_payload.get("lang") or "").strip(),
                 canonical=meta_payload.get("canonical"),

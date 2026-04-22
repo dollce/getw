@@ -12,7 +12,7 @@ from rich.console import Console
 from slugify import slugify
 
 from . import __version__
-from .agent import fetch
+from .agent import ChallengePageError, fetch
 from .cleaner import clean_markdown
 from .converter import html_to_markdown
 from .metadata import build_frontmatter
@@ -178,15 +178,28 @@ def main(
     log = console.log if not quiet else (lambda *_args, **_kw: None)
 
     log(f"[bold cyan]Fetching[/] {url}")
-    result = fetch(
-        url,
-        wait_seconds=wait,
-        wait_selector=wait_selector,
-        timeout_ms=timeout * 1000,
-        user_agent=user_agent or None,  # type: ignore[arg-type]
-        headless=not no_headless,
-        extra_http_headers=extra_headers or None,
-    )
+    try:
+        result = fetch(
+            url,
+            wait_seconds=wait,
+            wait_selector=wait_selector,
+            timeout_ms=timeout * 1000,
+            user_agent=user_agent or None,  # type: ignore[arg-type]
+            headless=not no_headless,
+            extra_http_headers=extra_headers or None,
+        )
+    except ChallengePageError as exc:
+        # Silent failure is worse than loud failure here: without this the
+        # challenge interstitial gets serialized as if it were the real page.
+        raise click.ClickException(
+            f"Bot challenge page detected ({exc.vendor}): title={exc.title!r} "
+            f"status={exc.status}. mark2down cannot solve interactive challenges "
+            f"in headless mode.\n"
+            f"Workaround: solve the challenge once in a regular browser, copy "
+            f"the session cookie (e.g. cf_clearance for Cloudflare), then retry "
+            f"with:\n"
+            f"  m2d {url!r} --header 'Cookie: cf_clearance=...'"
+        ) from exc
     log(f"  status={result.status} lang={result.lang or '?'} title={result.title!r}")
 
     log("[bold cyan]Converting[/] to Markdown")
