@@ -97,7 +97,7 @@ _NOISE_SELECTORS = (
     "[class*='navigation' i]",
     "[id*='navigation' i]",
     "[role='search']",
-    "[aria-label*='search' i]",
+    "[aria-label~='search' i]",
     ".search",
     ".search-box",
     ".searchbox",
@@ -168,11 +168,11 @@ _CONTENT_SELECTORS = (
 )
 
 _NOISE_CLASS_ID_RE = re.compile(
-    r"(?:^|[-_])("
+    r"(?:^|[\s_-])("
     r"ad|advert|breadcrumb|comment|cookie|footer|gdpr|menu|modal|nav|"
     r"newsletter|pagination|promo|recommend|related|search|share|sidebar|"
     r"social|subscribe|tag|toc"
-    r")(?:$|[-_])",
+    r")(?:$|[\s_-])",
     re.IGNORECASE,
 )
 
@@ -290,16 +290,58 @@ def _prune_empty(scope: Tag) -> None:
             el.decompose()
 
 
-def _prepend_page_heading_if_missing(working: BeautifulSoup, source: BeautifulSoup) -> None:
+def _shares_content_context(heading: Tag, main: Tag) -> bool:
+    main_ancestor_ids = {id(main), *(id(parent) for parent in main.parents if isinstance(parent, Tag))}
+    for parent in heading.parents:
+        if not isinstance(parent, Tag) or id(parent) not in main_ancestor_ids:
+            continue
+        class_id = _class_id_text(parent).lower()
+        if parent.name in {"article", "main"} or parent.get("role") == "main":
+            return True
+        if any(marker in class_id for marker in ("entry-content", "post-content", "article-content", "article-body")):
+            return True
+    return False
+
+
+def _is_noise_heading(heading: Tag, main: Tag) -> bool:
+    shared_content_context = _shares_content_context(heading, main)
+    for parent in heading.parents:
+        if not isinstance(parent, Tag):
+            continue
+        if parent.name in {"header", "nav", "footer", "aside"} and not shared_content_context:
+            return True
+        if _NOISE_CLASS_ID_RE.search(_class_id_text(parent)):
+            return True
+    return False
+
+
+def _nearby_heading_scopes(main: Tag) -> list[Tag]:
+    scopes: list[Tag] = []
+    node: Tag | None = main
+    hops = 0
+    while isinstance(node, Tag) and node.name not in {"body", "html"} and hops < 6:
+        for sibling in node.find_previous_siblings():
+            if isinstance(sibling, Tag):
+                scopes.append(sibling)
+        parent = node.parent
+        node = parent if isinstance(parent, Tag) else None
+        hops += 1
+    return scopes
+
+
+def _prepend_page_heading_if_missing(working: BeautifulSoup, main: Tag) -> None:
     """Preserve a page-level H1 when the selected body starts below the hero."""
     if working.find("h1"):
         return
 
-    headings = [
-        " ".join(h.get_text(" ", strip=True).split())
-        for h in source.find_all("h1")
-        if h.get_text(" ", strip=True)
-    ]
+    headings: list[str] = []
+    for scope in _nearby_heading_scopes(main):
+        for heading in scope.find_all("h1"):
+            if _is_noise_heading(heading, main):
+                continue
+            text = " ".join(heading.get_text(" ", strip=True).split())
+            if text:
+                headings.append(text)
     unique_headings = list(dict.fromkeys(headings))
     if len(unique_headings) != 1:
         return
@@ -325,7 +367,7 @@ def html_to_markdown(html: str, url: str) -> str:
     working = BeautifulSoup(str(main), "lxml")
     _strip_tags(working, _STRIP_TAGS)
     _strip_selectors(working, _NOISE_SELECTORS)
-    _prepend_page_heading_if_missing(working, soup)
+    _prepend_page_heading_if_missing(working, main)
     _resolve_urls(working, url)
     _prune_empty(working)
 

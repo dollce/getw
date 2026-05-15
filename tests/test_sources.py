@@ -210,6 +210,71 @@ class SourceConversionTests(unittest.TestCase):
         self.assertNotIn("News & Articles", markdown)
         self.assertNotIn("Also of Interest", markdown)
 
+    def test_does_not_prepend_global_masthead_h1(self) -> None:
+        html = """
+        <html>
+          <body>
+            <header>
+              <h1>Threat Research</h1>
+            </header>
+            <main>
+              <div class="article-content">
+                <h2>Actual article title</h2>
+                <p>Primary article body.</p>
+              </div>
+            </main>
+          </body>
+        </html>
+        """
+
+        markdown = html_to_markdown(html, "https://example.com/report")
+
+        self.assertIn("## Actual article title", markdown)
+        self.assertIn("Primary article body.", markdown)
+        self.assertNotIn("# Threat Research", markdown)
+
+    def test_research_aria_label_is_not_treated_as_search_noise(self) -> None:
+        html = """
+        <html>
+          <body>
+            <div role="search">Search UI</div>
+            <div class="article-content" aria-label="Threat Research">
+              <h1>Threat report</h1>
+              <p>Primary research article body.</p>
+            </div>
+          </body>
+        </html>
+        """
+
+        markdown = html_to_markdown(html, "https://example.com/report")
+
+        self.assertIn("# Threat report", markdown)
+        self.assertIn("Primary research article body.", markdown)
+        self.assertNotIn("Search UI", markdown)
+
+    def test_space_delimited_noise_tokens_are_downweighted(self) -> None:
+        html = """
+        <html>
+          <body>
+            <div class="promo content">
+              <p>Promotional content should not become the article body even when it is very long.</p>
+              <p>Promotional content should not become the article body even when it is very long.</p>
+              <p>Promotional content should not become the article body even when it is very long.</p>
+            </div>
+            <div class="story-content">
+              <h1>Investigation</h1>
+              <p>Primary article body.</p>
+            </div>
+          </body>
+        </html>
+        """
+
+        markdown = html_to_markdown(html, "https://example.com/report")
+
+        self.assertIn("# Investigation", markdown)
+        self.assertIn("Primary article body.", markdown)
+        self.assertNotIn("Promotional content", markdown)
+
     def test_strips_syntax_highlighter_layout_tables(self) -> None:
         html = """
         <html>
