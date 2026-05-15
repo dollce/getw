@@ -164,7 +164,7 @@ def _infer_text_extension(
     if mime_lc in {"text/csv", "application/csv"}:
         return ".csv", None
     if mime_lc == "text/tab-separated-values":
-        return ".tsv", None
+        return ".tsv", csv.excel_tab
     if _looks_like_jsonl(text):
         return ".jsonl", None
     try:
