@@ -12,12 +12,24 @@ from rich.console import Console
 from slugify import slugify
 
 from . import __version__
-from .agent import ChallengePageError, fetch
-from .cleaner import clean_markdown
-from .converter import html_to_markdown
-from .metadata import build_frontmatter
+from .agent import ChallengePageError
+from .metadata import build_frontmatter, build_source_frontmatter
+from .ocr import OcrOptions
+from .sources import (
+    convert_bytes,
+    convert_data_uri,
+    convert_file_uri,
+    convert_local_file,
+    convert_url,
+    is_data_uri,
+    is_file_uri,
+    is_url,
+)
 
 console = Console(stderr=True)
+DEFAULT_WAIT_SECONDS = 3.0
+DEFAULT_TIMEOUT_SECONDS = 60
+DEFAULT_OCR_MAX_IMAGES = 20
 
 
 def _default_filename(title: str, url: str) -> str:
@@ -35,15 +47,26 @@ def _default_filename(title: str, url: str) -> str:
 
 
 def _resolve_output_path(
-    output_dir: Path | None,
-    filename: str | None,
+    output: Path | None,
     title: str,
     url: str,
 ) -> Path:
-    target_dir = Path(output_dir) if output_dir else Path.cwd()
-    target_dir = target_dir.expanduser().resolve()
+    if output is None:
+        target_dir = Path.cwd().resolve()
+        name = _default_filename(title, url)
+    else:
+        target = output.expanduser()
+        if target.exists() and target.is_file():
+            target_dir = target.parent.resolve()
+            name = target.name
+        elif target.suffix.lower() == ".md":
+            target_dir = target.parent.resolve()
+            name = target.name
+        else:
+            target_dir = target.resolve()
+            name = _default_filename(title, url)
+
     target_dir.mkdir(parents=True, exist_ok=True)
-    name = filename or _default_filename(title, url)
     if not name.endswith(".md"):
         name += ".md"
     path = target_dir / name
@@ -58,166 +81,90 @@ def _resolve_output_path(
 
 @click.command(
     context_settings={"help_option_names": ["-h", "--help"]},
-    epilog="Example:\n  mark2down https://example.com/post -o ./notes --stdout",
+    epilog=(
+        "\b\nExamples:\n"
+        "  m2d https://example.com/post\n"
+        "  m2d ./report.pdf -o ./notes\n"
+        "  cat data.csv | m2d -o ./notes/data.md"
+    ),
 )
 @click.version_option(__version__, "-V", "--version", prog_name="mark2down")
-@click.argument("url", required=False)
+@click.argument("source", required=False)
 @click.option(
     "-o",
-    "--output-dir",
-    type=click.Path(file_okay=False, path_type=Path),
+    "--output",
+    "output",
+    type=click.Path(path_type=Path),
     default=None,
-    help="Directory to save the Markdown file (default: current working directory).",
+    help="Save path. Use a directory or a .md file path. Defaults to the current directory.",
 )
-@click.option(
-    "-f",
-    "--filename",
-    type=str,
-    default=None,
-    help="Override the output filename (default: slug of the page title).",
-)
-@click.option(
-    "-p",
-    "--stdout",
-    "emit_stdout",
-    is_flag=True,
-    default=False,
-    help="Also print the final Markdown to stdout.",
-)
-@click.option(
-    "--no-save",
-    is_flag=True,
-    default=False,
-    help="Do not write a file; just print Markdown to stdout.",
-)
-@click.option(
-    "--no-frontmatter",
-    is_flag=True,
-    default=False,
-    help="Skip the YAML frontmatter block.",
-)
-@click.option(
-    "--wait",
-    type=float,
-    default=1.0,
-    show_default=True,
-    help="Extra seconds to wait after networkidle before DOM injection.",
-)
-@click.option(
-    "--wait-selector",
-    type=str,
-    default=None,
-    help="CSS selector that must appear before extraction (e.g. 'article').",
-)
-@click.option(
-    "--timeout",
-    type=int,
-    default=45,
-    show_default=True,
-    help="Navigation/network timeout in seconds.",
-)
-@click.option(
-    "--no-headless",
-    is_flag=True,
-    default=False,
-    help="Launch the browser with a visible window (debug).",
-)
-@click.option(
-    "--user-agent",
-    type=str,
-    default=None,
-    help="Override the default Chromium user agent string.",
-)
-@click.option(
-    "--header",
-    "headers",
-    multiple=True,
-    help="Extra HTTP header (repeatable). Format: 'Name: value'.",
-)
-@click.option(
-    "--install-browsers",
-    is_flag=True,
-    default=False,
-    help="Install the Chromium browser binary and exit.",
-)
-@click.option("-q", "--quiet", is_flag=True, default=False, help="Silence progress messages.")
 def main(
-    url: str | None,
-    output_dir: Path | None,
-    filename: str | None,
-    emit_stdout: bool,
-    no_save: bool,
-    no_frontmatter: bool,
-    wait: float,
-    wait_selector: str | None,
-    timeout: int,
-    no_headless: bool,
-    user_agent: str | None,
-    headers: tuple[str, ...],
-    install_browsers: bool,
-    quiet: bool,
+    source: str | None,
+    output: Path | None,
 ) -> None:
-    """Fetch URL, convert the page to clean Markdown, and (by default) save it."""
-    if install_browsers:
-        from .agent import _install_browsers_if_needed
+    """Convert a URL, local file, or stdin to clean Markdown."""
+    if not source:
+        if not sys.stdin.isatty():
+            source = "-"
+        else:
+            raise click.UsageError("Missing argument 'SOURCE'.")
 
-        _install_browsers_if_needed()
-        click.echo("Chromium installed.")
-        return
+    log = console.log
+    ocr_options = OcrOptions(
+        enabled=True,
+        max_images=DEFAULT_OCR_MAX_IMAGES,
+    )
 
-    if not url:
-        raise click.UsageError("Missing argument 'URL'.")
-
-    if not url.startswith(("http://", "https://")):
-        raise click.BadParameter("URL must start with http:// or https://")
-
-    extra_headers: dict[str, str] = {}
-    for raw in headers:
-        if ":" not in raw:
-            raise click.BadParameter(f"Header must be 'Name: value', got: {raw!r}")
-        name, _, val = raw.partition(":")
-        extra_headers[name.strip()] = val.strip()
-
-    log = console.log if not quiet else (lambda *_args, **_kw: None)
-
-    log(f"[bold cyan]Fetching[/] {url}")
+    log(f"[bold cyan]Reading[/] {source}")
     try:
-        result = fetch(
-            url,
-            wait_seconds=wait,
-            wait_selector=wait_selector,
-            timeout_ms=timeout * 1000,
-            user_agent=user_agent or None,  # type: ignore[arg-type]
-            headless=not no_headless,
-            extra_http_headers=extra_headers or None,
-        )
+        if is_url(source):
+            result = convert_url(
+                source,
+                wait_seconds=DEFAULT_WAIT_SECONDS,
+                timeout_ms=DEFAULT_TIMEOUT_SECONDS * 1000,
+                ocr=ocr_options,
+            )
+        elif is_file_uri(source):
+            result = convert_file_uri(source, ocr=ocr_options)
+        elif is_data_uri(source):
+            result = convert_data_uri(source, ocr=ocr_options)
+        elif source == "-":
+            result = convert_bytes(
+                sys.stdin.buffer.read(),
+                source_name="-",
+                source_type="stdin",
+                base_url="",
+                ocr=ocr_options,
+            )
+        else:
+            result = convert_local_file(Path(source), ocr=ocr_options)
     except ChallengePageError as exc:
         # Silent failure is worse than loud failure here: without this the
         # challenge interstitial gets serialized as if it were the real page.
         raise click.ClickException(
             f"Bot challenge page detected ({exc.vendor}): title={exc.title!r} "
             f"status={exc.status}. mark2down cannot solve interactive challenges "
-            f"in headless mode.\n"
-            f"Workaround: solve the challenge once in a regular browser, copy "
-            f"the session cookie (e.g. cf_clearance for Cloudflare), then retry "
-            f"with:\n"
-            f"  m2d {url!r} --header 'Cookie: cf_clearance=...'"
+            f"in headless mode."
         ) from exc
-    log(f"  status={result.status} lang={result.lang or '?'} title={result.title!r}")
+    except (FileNotFoundError, UnicodeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    log(
+        f"  type={result.source_type} status={result.status or '?'} "
+        f"mime={result.mime_type or '?'} title={result.title!r}"
+    )
 
     log("[bold cyan]Converting[/] to Markdown")
-    markdown_body = html_to_markdown(result.html, result.final_url)
-    markdown_body = clean_markdown(markdown_body)
+    markdown_body = result.markdown
 
     if not markdown_body.strip():
-        raise click.ClickException("Extraction produced empty content. Try --wait or --wait-selector.")
+        raise click.ClickException("Extraction produced empty content.")
 
-    if no_frontmatter:
-        final_md = markdown_body
-    else:
+    if result.source_type == "url":
+        final_url = result.final_url or source
+        assert source is not None
         frontmatter = build_frontmatter(
-            url=url,
-            final_url=result.final_url,
+            url=source,
+            final_url=final_url,
             title=result.title,
             html_lang=result.lang,
             canonical=result.canonical,
@@ -226,20 +173,22 @@ def main(
             markdown=markdown_body,
         )
         final_md = frontmatter + markdown_body
+    else:
+        frontmatter = build_source_frontmatter(
+            source=result.source,
+            source_type=result.source_type,
+            title=result.title,
+            markdown=markdown_body,
+            path=result.path,
+            mime_type=result.mime_type,
+            extension=result.extension,
+            charset=result.charset,
+        )
+        final_md = frontmatter + markdown_body
 
-    wrote_file = False
-    if not no_save:
-        target = _resolve_output_path(output_dir, filename, result.title, url)
-        target.write_text(final_md, encoding="utf-8")
-        wrote_file = True
-        log(f"[bold green]Saved[/] {target}")
-
-    should_print = emit_stdout or no_save or not wrote_file
-    if should_print:
-        sys.stdout.write(final_md)
-        if not final_md.endswith("\n"):
-            sys.stdout.write("\n")
-        sys.stdout.flush()
+    target = _resolve_output_path(output, result.title, source)
+    target.write_text(final_md, encoding="utf-8")
+    log(f"[bold green]Saved[/] {target}")
 
 
 if __name__ == "__main__":
