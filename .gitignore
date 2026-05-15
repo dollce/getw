@@ -22,6 +22,7 @@ pip-wheel-metadata/
 .ruff_cache/
 .coverage
 htmlcov/
+tests/
 
 # Editor / OS
 .DS_Store
