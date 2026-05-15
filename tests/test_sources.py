@@ -232,6 +232,27 @@ class SourceConversionTests(unittest.TestCase):
         self.assertIn("Primary article body.", markdown)
         self.assertNotIn("# Threat Research", markdown)
 
+    def test_hard_noise_markers_do_not_remove_structural_roots(self) -> None:
+        html = """
+        <html>
+          <body class="navigation-enabled has-footer">
+            <main>
+              <article>
+                <h1>Threat report</h1>
+                <p>Primary article body.</p>
+              </article>
+            </main>
+            <div class="has-footer">Footer links and chrome</div>
+          </body>
+        </html>
+        """
+
+        markdown = html_to_markdown(html, "https://example.com/report")
+
+        self.assertIn("# Threat report", markdown)
+        self.assertIn("Primary article body.", markdown)
+        self.assertNotIn("Footer links and chrome", markdown)
+
     def test_research_aria_label_is_not_treated_as_search_noise(self) -> None:
         html = """
         <html>

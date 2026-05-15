@@ -215,8 +215,9 @@ def _link_text_length(el: Tag) -> int:
 
 def _strip_noise_markers(soup: BeautifulSoup) -> None:
     """Remove chrome whose class/id tokens identify known non-article modules."""
+    structural_roots = {"html", "body", "main", "article"}
     for el in list(soup.find_all(True)):
-        if el.parent is None:
+        if el.parent is None or el.name in structural_roots:
             continue
         if _HARD_NOISE_CLASS_ID_RE.search(_class_id_text(el)):
             el.decompose()
