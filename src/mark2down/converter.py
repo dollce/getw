@@ -336,6 +336,7 @@ def _is_noise_heading(heading: Tag, main: Tag) -> bool:
 
 
 def _nearby_heading_scopes(main: Tag) -> list[Tag]:
+    """Return only the selected node and its content-context ancestors."""
     scopes = [main]
     node: Tag | None = main
     hops = 0
@@ -356,6 +357,8 @@ def _prepend_page_heading_if_missing(working: BeautifulSoup, main: Tag) -> None:
     headings: list[str] = []
     for scope in _nearby_heading_scopes(main):
         for heading in scope.find_all("h1"):
+            if not _shares_content_context(heading, main):
+                continue
             if _is_noise_heading(heading, main):
                 continue
             text = " ".join(heading.get_text(" ", strip=True).split())
