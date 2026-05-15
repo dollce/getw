@@ -61,9 +61,18 @@ _NOISE_SELECTORS = (
     ".comments",
     ".comment-list",
     ".comment-section",
+    "#comments",
+    ".entry-comments",
+    ".comment-respond",
     ".related",
     ".related-posts",
     ".related-articles",
+    ".article-footer",
+    ".entry-footer",
+    ".post-footer",
+    ".article-tags",
+    ".post-tags",
+    ".tag-list",
     ".newsletter",
     ".subscribe",
     ".cookie",
@@ -107,6 +116,9 @@ _NOISE_SELECTORS = (
     ".sistersitebox",
     ".thumbcaption .magnify",
     ".external.text",
+    ".c-article__sidebar",
+    ".c-article__footer",
+    ".c-article__comments",
 )
 
 _CONTENT_SELECTORS = (
@@ -161,6 +173,14 @@ def _resolve_urls(scope: Tag, base_url: str) -> None:
             a["href"] = urljoin(base_url, href)
     for img in scope.find_all("img"):
         src = (img.get("src") or "").strip()
+        if src.startswith("data:"):
+            # Base64 image payloads are hostile to LLM context windows. Keep
+            # the alt text and replace the opaque binary payload with a stable
+            # placeholder.
+            img["src"] = "embedded-image"
+            if not img.get("alt"):
+                img["alt"] = ""
+            continue
         if not src or src.startswith("data:"):
             for attr in ("data-src", "data-original", "data-lazy-src", "data-srcset"):
                 v = img.get(attr)

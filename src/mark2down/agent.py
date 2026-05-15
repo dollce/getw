@@ -13,6 +13,8 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any
 
+from .ocr import OcrCollector, OcrOptions
+
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -95,6 +97,38 @@ META_EXTRACTOR = r"""
     lang: lang,
     title: document.title || '',
   };
+}
+"""
+
+IMAGE_OCR_SELECTOR = r"""
+(maxImages) => {
+  const selected = [];
+  let nextId = 0;
+  for (const img of Array.from(document.images)) {
+    if (selected.length >= maxImages) break;
+    const rect = img.getBoundingClientRect();
+    if (rect.width < 24 || rect.height < 24) continue;
+    const style = window.getComputedStyle(img);
+    if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity) === 0) continue;
+    const id = String(nextId++);
+    img.setAttribute('data-mark2down-ocr-id', id);
+    selected.push({ id, width: rect.width, height: rect.height });
+  }
+  return selected;
+}
+"""
+
+IMAGE_OCR_INJECTOR = r"""
+(items) => {
+  for (const item of items) {
+    const img = document.querySelector(`img[data-mark2down-ocr-id="${item.id}"]`);
+    if (!img || !item.block) continue;
+    const block = document.createElement('section');
+    block.setAttribute('data-mark2down-ocr', 'true');
+    block.innerText = item.block;
+    const target = img.closest('a') || img;
+    target.insertAdjacentElement('afterend', block);
+  }
 }
 """
 
@@ -193,6 +227,7 @@ def fetch(
     user_agent: str = DEFAULT_USER_AGENT,
     headless: bool = True,
     extra_http_headers: dict[str, str] | None = None,
+    ocr: OcrOptions | None = None,
 ) -> FetchResult:
     """Load *url* in a headless browser and return settled HTML + metadata."""
     try:
@@ -234,6 +269,8 @@ def fetch(
                 pass
             page.wait_for_timeout(300)
 
+            _inject_image_ocr(page, ocr)
+
             meta_payload = page.evaluate(META_EXTRACTOR)
             html = page.content()
             final_url = page.url
@@ -266,3 +303,28 @@ def fetch(
             _install_browsers_if_needed()
             return _run()
         raise
+
+
+def _inject_image_ocr(page: Any, ocr: OcrOptions | None) -> None:
+    collector = OcrCollector(ocr)
+    if not collector.enabled:
+        return
+
+    selected = page.evaluate(IMAGE_OCR_SELECTOR, collector.options.max_images)
+    injected: list[dict[str, str]] = []
+    for item in selected:
+        if not collector.enabled:
+            break
+        image_id = str(item["id"])
+        locator = page.locator(f'img[data-mark2down-ocr-id="{image_id}"]').first
+        try:
+            locator.scroll_into_view_if_needed(timeout=1_000)
+            screenshot = locator.screenshot(type="png", timeout=3_000)
+        except Exception:
+            continue
+        block = collector.run(screenshot, label=f"url image {image_id}")
+        if block:
+            injected.append({"id": image_id, "block": block})
+
+    if injected:
+        page.evaluate(IMAGE_OCR_INJECTOR, injected)

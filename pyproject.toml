@@ -17,6 +17,12 @@ dependencies = [
     "python-slugify>=8.0.4",
     "python-dateutil>=2.9.0",
     "charset-normalizer>=3.4.0",
+    "mammoth>=1.8.0",
+    "openpyxl>=3.1.5",
+    "pdfminer.six>=20240706",
+    "pdfplumber>=0.11.7",
+    "python-pptx>=1.0.2",
+    "ocrmac>=1.0.1; sys_platform == 'darwin'",
 ]
 
 [project.scripts]
