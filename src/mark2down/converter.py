@@ -68,13 +68,9 @@ _NOISE_SELECTORS = (
     ".related",
     ".related-posts",
     ".related-articles",
-    "[class*='related' i]",
-    "[id*='related' i]",
     ".article-footer",
     ".entry-footer",
     ".post-footer",
-    "[class*='footer' i]",
-    "[id*='footer' i]",
     ".article-tags",
     ".post-tags",
     ".tag-list",
@@ -94,8 +90,6 @@ _NOISE_SELECTORS = (
     "[class*='ad-slot']",
     "[class*='ad-banner']",
     "[id*='ad-slot']",
-    "[class*='navigation' i]",
-    "[id*='navigation' i]",
     "[role='search']",
     "[aria-label~='search' i]",
     ".search",
@@ -104,7 +98,6 @@ _NOISE_SELECTORS = (
     ".site-search",
     "[class*='__search' i]",
     "[class*='searchbox' i]",
-    "[id$='-search' i]",
     "[id*='searchbox' i]",
     "[aria-label*='breadcrumb' i]",
     "[aria-label*='navigation' i]",
@@ -163,7 +156,6 @@ _CONTENT_SELECTORS = (
     "[class*='blog-content' i]",
     "[class*='story-content' i]",
     "[class*='scrolling-content' i]",
-    "[class*='content' i]",
     "#mw-content-text",  # Wikipedia
 )
 
@@ -174,6 +166,21 @@ _NOISE_CLASS_ID_RE = re.compile(
     r"social|subscribe|tag|toc"
     r")(?:$|[\s_-])",
     re.IGNORECASE,
+)
+
+_HARD_NOISE_CLASS_ID_RE = re.compile(
+    r"(?:^|[\s_-])(footer|navigation|related)(?:$|[\s_-])",
+    re.IGNORECASE,
+)
+
+_CONTENT_CONTEXT_MARKERS = (
+    "entry-content",
+    "post-content",
+    "article-content",
+    "article-body",
+    "blog-content",
+    "story-content",
+    "scrolling-content",
 )
 
 
@@ -206,6 +213,24 @@ def _link_text_length(el: Tag) -> int:
     return sum(len(a.get_text(" ", strip=True)) for a in el.find_all("a"))
 
 
+def _strip_noise_markers(soup: BeautifulSoup) -> None:
+    """Remove chrome whose class/id tokens identify known non-article modules."""
+    for el in list(soup.find_all(True)):
+        if el.parent is None:
+            continue
+        if _HARD_NOISE_CLASS_ID_RE.search(_class_id_text(el)):
+            el.decompose()
+
+
+def _is_content_context(el: Tag) -> bool:
+    class_id = _class_id_text(el).lower()
+    return (
+        el.name in {"article", "main"}
+        or el.get("role") == "main"
+        or any(marker in class_id for marker in _CONTENT_CONTEXT_MARKERS)
+    )
+
+
 def _candidate_score(el: Tag) -> float:
     text = el.get_text(" ", strip=True)
     text_len = len(text)
@@ -227,9 +252,9 @@ def _candidate_score(el: Tag) -> float:
         score += 1200
     if name == "main" or el.get("role") == "main":
         score += 900
-    if any(marker in class_id for marker in ("entry-content", "post-content", "article-content", "article-body")):
+    if any(marker in class_id for marker in _CONTENT_CONTEXT_MARKERS[:4]):
         score += 1000
-    if any(marker in class_id for marker in ("blog-content", "story-content", "scrolling-content")):
+    if any(marker in class_id for marker in _CONTENT_CONTEXT_MARKERS[4:]):
         score += 700
     if _NOISE_CLASS_ID_RE.search(class_id):
         score *= 0.2
@@ -293,12 +318,7 @@ def _prune_empty(scope: Tag) -> None:
 def _shares_content_context(heading: Tag, main: Tag) -> bool:
     main_ancestor_ids = {id(main), *(id(parent) for parent in main.parents if isinstance(parent, Tag))}
     for parent in heading.parents:
-        if not isinstance(parent, Tag) or id(parent) not in main_ancestor_ids:
-            continue
-        class_id = _class_id_text(parent).lower()
-        if parent.name in {"article", "main"} or parent.get("role") == "main":
-            return True
-        if any(marker in class_id for marker in ("entry-content", "post-content", "article-content", "article-body")):
+        if isinstance(parent, Tag) and id(parent) in main_ancestor_ids and _is_content_context(parent):
             return True
     return False
 
@@ -316,14 +336,13 @@ def _is_noise_heading(heading: Tag, main: Tag) -> bool:
 
 
 def _nearby_heading_scopes(main: Tag) -> list[Tag]:
-    scopes: list[Tag] = []
+    scopes = [main]
     node: Tag | None = main
     hops = 0
     while isinstance(node, Tag) and node.name not in {"body", "html"} and hops < 6:
-        for sibling in node.find_previous_siblings():
-            if isinstance(sibling, Tag):
-                scopes.append(sibling)
         parent = node.parent
+        if isinstance(parent, Tag) and _is_content_context(parent):
+            scopes.append(parent)
         node = parent if isinstance(parent, Tag) else None
         hops += 1
     return scopes
@@ -360,6 +379,7 @@ def html_to_markdown(html: str, url: str) -> str:
 
     _strip_tags(soup, _STRIP_TAGS)
     _strip_selectors(soup, _NOISE_SELECTORS)
+    _strip_noise_markers(soup)
 
     main = _pick_main(soup)
 
@@ -367,6 +387,7 @@ def html_to_markdown(html: str, url: str) -> str:
     working = BeautifulSoup(str(main), "lxml")
     _strip_tags(working, _STRIP_TAGS)
     _strip_selectors(working, _NOISE_SELECTORS)
+    _strip_noise_markers(working)
     _prepend_page_heading_if_missing(working, main)
     _resolve_urls(working, url)
     _prune_empty(working)
