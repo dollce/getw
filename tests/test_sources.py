@@ -218,6 +218,19 @@ class SourceConversionTests(unittest.TestCase):
         self.assertIn("| alpha | 10 |", result.markdown)
         self.assertEqual(result.extension, ".csv")
 
+    def test_preserves_tsv_delimiter_when_extension_hint_is_provided(self) -> None:
+        result = convert_bytes(
+            b"name\tscore\nalpha\t10\nbeta\t20\n",
+            source_name="-",
+            source_type="stdin",
+            base_url="",
+            extension="tsv",
+        )
+
+        self.assertIn("| name | score |", result.markdown)
+        self.assertIn("| alpha | 10 |", result.markdown)
+        self.assertEqual(result.extension, ".tsv")
+
     def test_autodetects_pdf_without_extension_hint(self) -> None:
         result = convert_bytes(
             _minimal_pdf("Hello PDF"),
