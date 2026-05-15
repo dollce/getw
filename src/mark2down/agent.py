@@ -1,25 +1,17 @@
-"""Agent-browser: Playwright-driven fetcher with DOM injection.
+"""CloakBrowser-driven fetcher with DOM injection.
 
-The browser acts as an agent — it loads the page, injects JavaScript to
-expand collapsed sections, trigger lazy-loaded content via auto-scroll,
-strip obvious noise, and finally hand back a settled HTML snapshot plus
-metadata scraped from the live DOM.
+The browser loads the page through CloakBrowser's stealth Chromium, injects
+JavaScript to expand collapsed sections, trigger lazy-loaded content via
+auto-scroll, strip obvious noise, and finally hand back a settled HTML snapshot
+plus metadata scraped from the live DOM.
 """
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from dataclasses import dataclass, field
 from typing import Any
 
 from .ocr import OcrCollector, OcrOptions
-
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
 
 # JavaScript injected into the page after initial load.  It removes inert
 # noise, expands hidden content, rewires lazy-load images, and scrolls the
@@ -212,10 +204,15 @@ def _looks_like_challenge(
     return None
 
 
-def _install_browsers_if_needed() -> None:
-    """Install Chromium the first time the tool is invoked on a machine."""
-    cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
-    subprocess.run(cmd, check=True)
+def _launch_stealth_context(**kwargs: Any) -> Any:
+    try:
+        from cloakbrowser import launch_context
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError(
+            "CloakBrowser is required. Install with `uv tool install mark2down`"
+            " or `pip install cloakbrowser`."
+        ) from exc
+    return launch_context(**kwargs)
 
 
 def fetch(
@@ -224,85 +221,67 @@ def fetch(
     wait_seconds: float = 1.0,
     wait_selector: str | None = None,
     timeout_ms: int = 45_000,
-    user_agent: str = DEFAULT_USER_AGENT,
+    user_agent: str | None = None,
     headless: bool = True,
     extra_http_headers: dict[str, str] | None = None,
     ocr: OcrOptions | None = None,
 ) -> FetchResult:
     """Load *url* in a headless browser and return settled HTML + metadata."""
+    context = _launch_stealth_context(
+        headless=headless,
+        humanize=True,
+        user_agent=user_agent,
+        viewport={"width": 1440, "height": 900},
+        locale="en-US",
+        extra_http_headers=extra_http_headers or {},
+        ignore_https_errors=True,
+    )
     try:
-        from playwright.sync_api import Error as PWError  # type: ignore
-        from playwright.sync_api import sync_playwright
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "Playwright is required. Install with `uv tool install mark2down`"
-            " or `pip install playwright`."
-        ) from exc
-
-    def _run() -> FetchResult:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=headless)
-            context = browser.new_context(
-                user_agent=user_agent,
-                viewport={"width": 1440, "height": 900},
-                locale="en-US",
-                extra_http_headers=extra_http_headers or {},
-                ignore_https_errors=True,
-            )
-            page = context.new_page()
-            response = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        page = context.new_page()
+        response = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        try:
+            page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        except Exception:
+            pass
+        if wait_selector:
             try:
-                page.wait_for_load_state("networkidle", timeout=timeout_ms)
-            except PWError:
+                page.wait_for_selector(wait_selector, timeout=timeout_ms)
+            except Exception:
                 pass
-            if wait_selector:
-                try:
-                    page.wait_for_selector(wait_selector, timeout=timeout_ms)
-                except PWError:
-                    pass
-            if wait_seconds:
-                page.wait_for_timeout(int(wait_seconds * 1000))
+        if wait_seconds:
+            page.wait_for_timeout(int(wait_seconds * 1000))
 
-            try:
-                page.evaluate(DOM_INJECTION)
-            except PWError:
-                pass
-            page.wait_for_timeout(300)
+        try:
+            page.evaluate(DOM_INJECTION)
+        except Exception:
+            pass
+        page.wait_for_timeout(300)
 
-            _inject_image_ocr(page, ocr)
+        _inject_image_ocr(page, ocr)
 
-            meta_payload = page.evaluate(META_EXTRACTOR)
-            html = page.content()
-            final_url = page.url
-            status = response.status if response else None
-            browser.close()
+        meta_payload = page.evaluate(META_EXTRACTOR)
+        html = page.content()
+        final_url = page.url
+        status = response.status if response else None
 
-            title = (meta_payload.get("title") or "").strip()
-            vendor = _looks_like_challenge(title=title, html=html, status=status)
-            if vendor is not None:
-                raise ChallengePageError(url=final_url, title=title, status=status, vendor=vendor)
+        title = (meta_payload.get("title") or "").strip()
+        vendor = _looks_like_challenge(title=title, html=html, status=status)
+        if vendor is not None:
+            raise ChallengePageError(url=final_url, title=title, status=status, vendor=vendor)
 
-            return FetchResult(
-                url=url,
-                final_url=final_url,
-                title=title,
-                html=html,
-                lang=(meta_payload.get("lang") or "").strip(),
-                canonical=meta_payload.get("canonical"),
-                meta=meta_payload.get("meta") or {},
-                json_ld=meta_payload.get("jsonLd") or [],
-                status=status,
-            )
-
-    try:
-        return _run()
-    except Exception as exc:
-        msg = str(exc).lower()
-        if "executable doesn't exist" in msg or "install" in msg and "chromium" in msg:
-            print("[mark2down] Installing Chromium (first-time setup)...", file=sys.stderr)
-            _install_browsers_if_needed()
-            return _run()
-        raise
+        return FetchResult(
+            url=url,
+            final_url=final_url,
+            title=title,
+            html=html,
+            lang=(meta_payload.get("lang") or "").strip(),
+            canonical=meta_payload.get("canonical"),
+            meta=meta_payload.get("meta") or {},
+            json_ld=meta_payload.get("jsonLd") or [],
+            status=status,
+        )
+    finally:
+        context.close()
 
 
 def _inject_image_ocr(page: Any, ocr: OcrOptions | None) -> None:
