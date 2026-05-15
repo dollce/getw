@@ -195,3 +195,46 @@ def build_frontmatter(
         width=120,
     )
     return f"---\n{body}---\n\n"
+
+
+def build_source_frontmatter(
+    *,
+    source: str,
+    source_type: str,
+    title: str,
+    markdown: str,
+    path: str | None = None,
+    mime_type: str | None = None,
+    extension: str | None = None,
+    charset: str | None = None,
+) -> str:
+    """Build frontmatter for non-browser inputs such as local files or stdin."""
+    stripped = re.sub(r"\s+", " ", re.sub(r"[#*_`>\-\[\]()]", " ", markdown)).strip()
+    word_count = len(stripped.split())
+    char_count = len(markdown)
+    reading_time_min = max(1, round(word_count / 220))
+
+    fm: dict[str, Any] = {
+        "title": title.strip() or None,
+        "source": source,
+        "source_type": source_type,
+        "path": path,
+        "mime_type": mime_type,
+        "extension": extension,
+        "charset": charset,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "word_count": word_count,
+        "char_count": char_count,
+        "reading_time_min": reading_time_min,
+        "generator": "mark2down",
+    }
+    fm = {k: v for k, v in fm.items() if v not in (None, "", [], {})}
+
+    body = yaml.safe_dump(
+        fm,
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+        width=120,
+    )
+    return f"---\n{body}---\n\n"
