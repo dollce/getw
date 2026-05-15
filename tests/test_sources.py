@@ -155,6 +155,61 @@ class SourceConversionTests(unittest.TestCase):
         self.assertNotIn("GReAT webinars", markdown)
         self.assertNotIn("Related item noise", markdown)
 
+    def test_prefers_aem_article_body_over_related_posts_and_footer(self) -> None:
+        html = """
+        <html>
+          <body>
+            <div class="b1-header">
+              <header class="b1-header__container">
+                <a href="/">Fortinet home</a>
+                <div class="b2-navigation">Products & Solutions</div>
+              </header>
+            </div>
+            <section class="b4-hero">
+              <h1>PureLogs: Delivery via PawsRunner Steganography</h1>
+            </section>
+            <div class="Table-Content">
+              <div class="blog-toc">
+                <div class="table-content-wrapper">
+                  <ul class="table-of-content"><li>Article Contents</li></ul>
+                </div>
+                <div class="scrolling-content automatic">
+                  <div class="b15-blog-meta__container text-container">By Winnie Lin | May 15, 2026</div>
+                  <div class="cmp cmp-text">
+                    <p>Primary Fortinet article body.</p>
+                    <h2>IOCs</h2>
+                    <p>8d0bcde739929fe41a6bcaaa62f7cba802af90b2ba8dea6ed1a4821236cdd588</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <section class="b12-related">
+              <h3>Related Posts</h3>
+              <a href="/blog/noise">Havoc: SharePoint with Microsoft Graph API turns into FUD C2</a>
+            </section>
+            <div class="b6-footer">
+              <h4>News & Articles</h4>
+              <a href="/corporate/careers">Careers</a>
+            </div>
+            <div class="be-related-link-container">
+              Also of Interest: Industry Trends & Insights
+            </div>
+          </body>
+        </html>
+        """
+
+        markdown = html_to_markdown(html, "https://www.fortinet.com/blog/threat-research/purelogs")
+
+        self.assertIn("# PureLogs: Delivery via PawsRunner Steganography", markdown)
+        self.assertIn("Primary Fortinet article body.", markdown)
+        self.assertIn("## IOCs", markdown)
+        self.assertNotIn("Products & Solutions", markdown)
+        self.assertNotIn("Article Contents", markdown)
+        self.assertNotIn("Related Posts", markdown)
+        self.assertNotIn("Havoc: SharePoint", markdown)
+        self.assertNotIn("News & Articles", markdown)
+        self.assertNotIn("Also of Interest", markdown)
+
     def test_strips_syntax_highlighter_layout_tables(self) -> None:
         html = """
         <html>
