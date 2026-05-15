@@ -61,7 +61,7 @@ def _resolve_output_path(
     epilog="Example:\n  mark2down https://example.com/post -o ./notes --stdout",
 )
 @click.version_option(__version__, "-V", "--version", prog_name="mark2down")
-@click.argument("url")
+@click.argument("url", required=False)
 @click.option(
     "-o",
     "--output-dir",
@@ -142,7 +142,7 @@ def _resolve_output_path(
 )
 @click.option("-q", "--quiet", is_flag=True, default=False, help="Silence progress messages.")
 def main(
-    url: str,
+    url: str | None,
     output_dir: Path | None,
     filename: str | None,
     emit_stdout: bool,
@@ -164,6 +164,9 @@ def main(
         _install_browsers_if_needed()
         click.echo("Chromium installed.")
         return
+
+    if not url:
+        raise click.UsageError("Missing argument 'URL'.")
 
     if not url.startswith(("http://", "https://")):
         raise click.BadParameter("URL must start with http:// or https://")
