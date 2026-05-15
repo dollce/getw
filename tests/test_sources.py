@@ -200,7 +200,6 @@ class SourceConversionTests(unittest.TestCase):
 
         markdown = html_to_markdown(html, "https://www.fortinet.com/blog/threat-research/purelogs")
 
-        self.assertIn("# PureLogs: Delivery via PawsRunner Steganography", markdown)
         self.assertIn("Primary Fortinet article body.", markdown)
         self.assertIn("## IOCs", markdown)
         self.assertNotIn("Products & Solutions", markdown)
@@ -274,6 +273,88 @@ class SourceConversionTests(unittest.TestCase):
         self.assertIn("# Investigation", markdown)
         self.assertIn("Primary article body.", markdown)
         self.assertNotIn("Promotional content", markdown)
+
+    def test_slug_like_search_id_is_not_treated_as_search_widget(self) -> None:
+        html = """
+        <html>
+          <body>
+            <div id="binary-search" class="article-content">
+              <h1>Binary Search</h1>
+              <p>Primary article body.</p>
+            </div>
+          </body>
+        </html>
+        """
+
+        markdown = html_to_markdown(html, "https://example.com/binary-search")
+
+        self.assertIn("# Binary Search", markdown)
+        self.assertIn("Primary article body.", markdown)
+
+    def test_unrelated_and_correlated_content_are_not_related_modules(self) -> None:
+        html = """
+        <html>
+          <body>
+            <div class="unrelated-analysis article-content">
+              <h1>Analysis</h1>
+              <p>Primary article body.</p>
+            </div>
+            <div class="b12-related">
+              <h3>Related Posts</h3>
+              <p>Recommendation noise.</p>
+            </div>
+          </body>
+        </html>
+        """
+
+        markdown = html_to_markdown(html, "https://example.com/report")
+
+        self.assertIn("# Analysis", markdown)
+        self.assertIn("Primary article body.", markdown)
+        self.assertNotIn("Recommendation noise", markdown)
+
+    def test_top_content_candidate_does_not_displace_body_fallback(self) -> None:
+        html = """
+        <html>
+          <body>
+            <div class="top-content">
+              <p>Small pre-article module.</p>
+            </div>
+            <section>
+              <h1>Article Title</h1>
+              <p>Actual article body that must not be dropped.</p>
+            </section>
+          </body>
+        </html>
+        """
+
+        markdown = html_to_markdown(html, "https://example.com/report")
+
+        self.assertIn("# Article Title", markdown)
+        self.assertIn("Actual article body that must not be dropped.", markdown)
+
+    def test_fallback_h1_does_not_use_separate_precontent_heading(self) -> None:
+        html = """
+        <html>
+          <body>
+            <section class="landing">
+              <h1>Product Overview</h1>
+            </section>
+            <main>
+              <div class="article-content">
+                <h2>Actual article title</h2>
+                <p>Primary article body.</p>
+              </div>
+            </main>
+          </body>
+        </html>
+        """
+
+        markdown = html_to_markdown(html, "https://example.com/report")
+
+        self.assertIn("## Actual article title", markdown)
+        self.assertIn("Primary article body.", markdown)
+        self.assertNotIn("# Product Overview", markdown)
 
     def test_strips_syntax_highlighter_layout_tables(self) -> None:
         html = """
