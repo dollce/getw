@@ -1,6 +1,8 @@
 # mark2down
 
-`mark2down` is a command-line tool that saves web pages as clean, readable Markdown. It opens pages with a real browser, extracts the main content, preserves useful metadata, and writes a Markdown file you can keep in notes, documentation, or a Git repository.
+`mark2down` turns web pages, local files, `file:`/`data:` URIs, and piped input into clean Markdown for LLM ingestion.
+
+The CLI is intentionally small: give it input, and it chooses the best available extraction path automatically. Browser rendering, document parsing, table preservation, metadata frontmatter, file-type detection, and OCR are handled by default.
 
 ```bash
 m2d https://example.com
@@ -10,13 +12,15 @@ m2d https://example.com
 ## Why Use It?
 
 - Archive web articles, docs, wiki pages, and blog posts as Markdown.
-- Keep source URL, title, language, word count, and other metadata in YAML frontmatter.
-- Convert complex HTML tables into GitHub Flavored Markdown tables.
-- Handle many browser-rendered pages better than static HTML scrapers.
+- Convert PDF, DOCX, PPTX, XLSX, HTML, Markdown, plain text, CSV, JSON, and JSONL.
+- Accept `http:`, `https:`, `file:`, and `data:` sources plus stdin.
+- Preserve source metadata in YAML frontmatter.
+- Convert complex tables into GitHub Flavored Markdown where possible.
+- Run OCR automatically when image text can improve the output.
 
 ## Install
 
-`mark2down` is designed to be installed with [`uv`](https://docs.astral.sh/uv/) as a global tool. This installs both `m2d` and `mark2down` into `~/.local/bin`, so the command works from any directory once that folder is on your `PATH`.
+Install the command globally with [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
 uv tool install git+https://github.com/dollce/mark2down.git
@@ -26,8 +30,6 @@ Check the installed command:
 
 ```bash
 which m2d
-# $HOME/.local/bin/m2d
-
 m2d --version
 ```
 
@@ -42,14 +44,6 @@ source ~/.zshrc
 
 For bash, add the same export line to `~/.bashrc` or `~/.bash_profile`.
 
-### Install Browser Runtime
-
-`mark2down` uses Playwright Chromium. Run this once after installation:
-
-```bash
-m2d --install-browsers
-```
-
 ### Install From a Local Checkout
 
 Use this when developing the project locally or testing unpublished changes:
@@ -60,13 +54,6 @@ cd mark2down
 uv tool install --reinstall .
 ```
 
-The installed executable is still available at:
-
-```bash
-which m2d
-# $HOME/.local/bin/m2d
-```
-
 ### Upgrade or Remove
 
 ```bash
@@ -74,9 +61,9 @@ uv tool upgrade mark2down
 uv tool uninstall mark2down
 ```
 
-## Quick Start
+## Usage
 
-Save a page to the current directory:
+Save a web page to the current directory:
 
 ```bash
 m2d https://example.com
@@ -88,64 +75,50 @@ Save to a specific directory:
 m2d https://example.com -o ~/notes/web
 ```
 
-Choose the output filename:
+Save to a specific Markdown file:
 
 ```bash
-m2d https://example.com -f example.md
+m2d https://example.com -o ~/notes/example.md
 ```
 
-Save the file and also print Markdown to stdout:
+Convert local documents:
 
 ```bash
-m2d https://example.com --stdout
+m2d ./report.pdf
+m2d ./brief.docx
+m2d ./deck.pptx
+m2d ./workbook.xlsx
 ```
 
-Print Markdown only, without writing a file:
+Convert structured text:
 
 ```bash
-m2d https://example.com --no-save
+m2d ./report.html
+m2d ./payload.json
+cat data.csv | m2d -o ./data.md
+cat events.jsonl | m2d -o ./events.md
 ```
 
-Pipe the output into another tool:
+Convert URI-style sources:
 
 ```bash
-m2d https://example.com --no-save | glow -
-```
-
-Wait for dynamic content to appear:
-
-```bash
-m2d https://app.example.com/post --wait-selector article --wait 3
-```
-
-Pass a cookie or another HTTP header:
-
-```bash
-m2d https://private.example.com/doc --header 'Cookie: session=...'
+m2d file:///tmp/report.html
+m2d 'data:text/csv,name%2Cscore%0Aalpha%2C10'
 ```
 
 ## Options
 
+`m2d` has one user-facing output option:
+
 | Option | Description | Default |
 |---|---|---|
-| `-o, --output-dir DIR` | Directory where the Markdown file is saved | Current directory |
-| `-f, --filename NAME` | Output filename | Generated from the page title |
-| `-p, --stdout` | Also print Markdown to stdout | Off |
-| `--no-save` | Print Markdown without writing a file | Off |
-| `--no-frontmatter` | Skip YAML frontmatter | Off |
-| `--wait SECONDS` | Extra wait after page load | `1.0` |
-| `--wait-selector CSS` | Wait until a CSS selector appears | None |
-| `--timeout SECONDS` | Navigation and network timeout | `45` |
-| `--no-headless` | Show the browser window for debugging | Off |
-| `--header 'Name: value'` | Extra HTTP header. Can be repeated | None |
-| `--user-agent UA` | Override the browser User-Agent | Default Chromium UA |
-| `-q, --quiet` | Hide progress logs | Off |
-| `--install-browsers` | Install Chromium and exit | None |
-| `-V, --version` | Print version | None |
+| `-o, --output PATH` | Save path. Use a directory or a `.md` file path. | Current directory |
+
+The standard `--help` and `--version` flags are also available.
 
 ## Output Format
 
-By default, the output contains YAML frontmatter followed by the extracted Markdown body.
+The output contains YAML frontmatter followed by the extracted Markdown body.
 
 ```markdown
 ---
@@ -154,7 +127,6 @@ source_url: https://en.wikipedia.org/wiki/Markdown
 canonical_url: https://en.wikipedia.org/wiki/Markdown
 domain: en.wikipedia.org
 language: en
-fetched_at: '2026-04-22T05:27:13.246069+00:00'
 word_count: 3658
 char_count: 35309
 reading_time_min: 17
@@ -164,28 +136,25 @@ generator: mark2down
 # Markdown
 
 Markdown is a lightweight markup language...
-
-| Feature | Filename extension | Images | Tables |
-| --- | --- | --- | --- |
-| DOC | .doc | Yes | Yes |
 ```
-
-Use `--no-frontmatter` if you only want the Markdown body.
 
 ## How It Works
 
-1. Loads the page with Playwright Chromium.
-2. Waits for the page to settle, then expands lazy-loaded and scroll-based content where possible.
-3. Selects the most likely main content container and removes navigation, footer, cookie banner, and other layout noise.
-4. Converts tables with a dedicated GitHub Flavored Markdown table writer.
-5. Builds frontmatter from meta tags, OpenGraph, Twitter card metadata, JSON-LD, canonical URL, and language hints.
-6. Normalizes Unicode and whitespace before writing the final Markdown file.
+1. Detects whether the input is a URL, local file, `file:` URI, `data:` URI, or stdin.
+2. Infers the content type from URL/file metadata, MIME hints, magic bytes, or text structure.
+3. For URLs, loads the page with Playwright Chromium and waits for dynamic content to settle.
+4. Selects the most likely main content container and removes navigation, footer, cookie banners, comments, and related-content chrome.
+5. Converts PDF, DOCX, PPTX, XLSX, HTML, CSV, JSON, and JSONL into Markdown-oriented structure.
+6. Preserves tables as GitHub Flavored Markdown where that format is appropriate.
+7. Runs OCR opportunistically on rendered URL images and embedded document images.
+8. Writes a Markdown file with source metadata and normalized text.
 
 ## Known Limitations
 
 - Interactive bot challenges such as Cloudflare Turnstile or Akamai challenges cannot be solved automatically.
-- Private pages require you to pass the needed cookie or authorization header manually.
-- PDF-heavy or image-heavy pages may contain little extractable text.
+- Private pages that require login may not be extractable from a fresh headless browser session.
+- OCR currently uses macOS Vision through `ocrmac`; on unsupported systems OCR is skipped rather than failing the whole conversion.
+- XLS formulas are not evaluated by mark2down; XLSX output uses stored workbook values.
 - Highly visual layouts are converted into document structure, not preserved as visual layouts.
 - Site-specific page chrome may sometimes remain in the extracted Markdown.
 

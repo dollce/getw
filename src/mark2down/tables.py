@@ -133,7 +133,10 @@ def _is_layout_table(table: Tag) -> bool:
     if role in {"presentation", "none"}:
         return True
     classes = " ".join(table.get("class") or [])
-    if re.search(r"\b(ambox|navbox|vertical-navbox|sidebar|metadata|mbox|tmbox|fmbox|ombox|cmbox|imbox)\b", classes):
+    if re.search(
+        r"\b(ambox|navbox|vertical-navbox|sidebar|metadata|mbox|tmbox|fmbox|ombox|cmbox|imbox|crayon-table)\b",
+        classes,
+    ):
         return True
     return False
 
