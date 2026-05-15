@@ -34,3 +34,7 @@ htmlcov/
 *.md.bak
 out/
 output/
+
+# Local-only files
+.claude/
+CLAUDE-HISTORY.md
