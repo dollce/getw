@@ -150,7 +150,10 @@ def _infer_text_extension(
     mime_type: str | None,
 ) -> tuple[str | None, csv.Dialect | None]:
     if extension:
-        return extension, None
+        normalized_extension = extension if extension.startswith(".") else f".{extension}"
+        if normalized_extension.lower() == ".tsv":
+            return normalized_extension, csv.excel_tab
+        return normalized_extension, None
     mime_lc = (mime_type or "").lower()
     if mime_lc.startswith(("text/html", "application/xhtml")) or _looks_like_html(text):
         return ".html", None
