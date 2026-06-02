@@ -18,18 +18,19 @@ from bs4 import BeautifulSoup
 
 from .agent import FetchResult, fetch
 from .cleaner import clean_markdown
-from .converter import html_to_markdown
+from .converter import html_to_clean_html, html_to_markdown
 from .documents import convert_document_bytes, is_supported_document
 from .ocr import OcrOptions
 
 
 @dataclass
 class ContentResult:
-    """Converted Markdown plus source metadata used by the CLI."""
+    """Converted content plus source metadata used by the CLI."""
 
     source: str
     source_type: str
     markdown: str
+    html: str = ""
     title: str = ""
     final_url: str | None = None
     lang: str = ""
@@ -112,6 +113,40 @@ def _looks_like_html(text: str) -> bool:
     return stripped.startswith(("<!doctype html", "<html", "<body", "<article")) or (
         "<html" in stripped[:500] and "</html>" in stripped
     )
+
+
+def _extract_html_metadata(soup: BeautifulSoup) -> tuple[str, str | None, dict[str, str], list[Any]]:
+    meta: dict[str, str] = {}
+    for el in soup.find_all("meta"):
+        key = el.get("name") or el.get("property") or el.get("itemprop")
+        val = el.get("content")
+        if key and val:
+            meta[str(key).lower()] = str(val)
+
+    json_ld: list[Any] = []
+    for el in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = el.string or el.get_text()
+        if not raw:
+            continue
+        try:
+            json_ld.append(json.loads(raw))
+        except json.JSONDecodeError:
+            continue
+
+    canonical: str | None = None
+    for el in soup.find_all("link"):
+        rel = el.get("rel")
+        rel_values = rel if isinstance(rel, list) else [rel]
+        if any(str(value).lower() == "canonical" for value in rel_values if value):
+            href = el.get("href")
+            if href:
+                canonical = str(href)
+                break
+
+    lang = ""
+    if soup.html:
+        lang = str(soup.html.get("lang") or "").strip()
+    return lang, canonical, meta, json_ld
 
 
 def _looks_like_jsonl(text: str) -> bool:
@@ -273,12 +308,29 @@ def convert_bytes(
         soup = BeautifulSoup(text, "lxml")
         if soup.title and soup.title.string:
             title = soup.title.string.strip() or title
+        lang, canonical, meta, json_ld = _extract_html_metadata(soup)
+        html = html_to_clean_html(text, base_url)
         markdown = html_to_markdown(text, base_url)
     elif extension in {".csv", ".tsv"} or mime_lc in {"text/csv", "application/csv", "text/tab-separated-values"}:
+        lang = ""
+        canonical = None
+        meta = {}
+        json_ld = []
+        html = ""
         markdown = _csv_to_markdown(text, csv_dialect)
     elif extension in {".json", ".jsonl"} or mime_lc in {"application/json", "application/x-ndjson"}:
+        lang = ""
+        canonical = None
+        meta = {}
+        json_ld = []
+        html = ""
         markdown = _json_to_markdown(text, extension)
     else:
+        lang = ""
+        canonical = None
+        meta = {}
+        json_ld = []
+        html = ""
         markdown = text
 
     markdown = clean_markdown(markdown)
@@ -286,7 +338,12 @@ def convert_bytes(
         source=source_name,
         source_type=source_type,
         markdown=markdown,
+        html=html,
         title=title,
+        lang=lang,
+        canonical=canonical,
+        meta=meta,
+        json_ld=json_ld,
         path=path,
         mime_type=mime_type,
         extension=extension,
@@ -315,11 +372,13 @@ def convert_url(
         extra_http_headers=extra_http_headers,
         ocr=ocr,
     )
+    html = html_to_clean_html(fetched.html, fetched.final_url)
     markdown = clean_markdown(html_to_markdown(fetched.html, fetched.final_url))
     return ContentResult(
         source=url,
         source_type="url",
         markdown=markdown,
+        html=html,
         title=fetched.title,
         final_url=fetched.final_url,
         lang=fetched.lang,

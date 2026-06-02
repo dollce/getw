@@ -1,21 +1,21 @@
 # mark2down
 
-`mark2down` turns web pages, local files, `file:`/`data:` URIs, and piped input into clean Markdown for LLM ingestion.
+`mark2down` turns web pages, HTML, local files, `file:`/`data:` URIs, and piped input into LLM-ready HTML or Markdown.
 
-The CLI is intentionally small: give it input, and it chooses the best available extraction path automatically. Browser rendering, document parsing, table preservation, metadata frontmatter, file-type detection, and OCR are handled by default.
+The CLI is intentionally small: give it input, and it chooses the best available extraction path automatically. Browser rendering, document parsing, table preservation, rich metadata, file-type detection, and OCR are handled by default.
 
 ```bash
 m2d https://example.com
-# Creates a Markdown file in the current directory.
+# Creates a rich HTML file in the current directory.
 ```
 
 ## Why Use It?
 
-- Archive web articles, docs, wiki pages, and blog posts as Markdown.
+- Archive web articles, docs, wiki pages, and blog posts as rich HTML or Markdown.
 - Convert PDF, DOCX, PPTX, XLSX, HTML, Markdown, plain text, CSV, JSON, and JSONL.
 - Accept `http:`, `https:`, `file:`, and `data:` sources plus stdin.
-- Preserve source metadata in YAML frontmatter.
-- Convert complex tables into GitHub Flavored Markdown where possible.
+- Preserve source metadata in HTML metadata blocks or YAML frontmatter.
+- Preserve complex tables as HTML tables or GitHub Flavored Markdown where possible.
 - Run OCR automatically when image text can improve the output.
 
 ## Install
@@ -63,10 +63,16 @@ uv tool uninstall mark2down
 
 ## Usage
 
-Save a web page to the current directory:
+Save a web page to the current directory as rich HTML:
 
 ```bash
 m2d https://example.com
+```
+
+Save a web page as Markdown instead:
+
+```bash
+m2d https://example.com --format markdown
 ```
 
 Save to a specific directory:
@@ -75,9 +81,10 @@ Save to a specific directory:
 m2d https://example.com -o ~/notes/web
 ```
 
-Save to a specific Markdown file:
+Save to a specific HTML or Markdown file:
 
 ```bash
+m2d https://example.com -o ~/notes/example.html
 m2d https://example.com -o ~/notes/example.md
 ```
 
@@ -94,6 +101,7 @@ Convert structured text:
 
 ```bash
 m2d ./report.html
+m2d ./report.html --format markdown
 m2d ./payload.json
 cat data.csv | m2d -o ./data.md
 cat events.jsonl | m2d -o ./events.md
@@ -108,17 +116,57 @@ m2d 'data:text/csv,name%2Cscore%0Aalpha%2C10'
 
 ## Options
 
-`m2d` has one user-facing output option:
+`m2d` has these output options:
 
 | Option | Description | Default |
 |---|---|---|
-| `-o, --output PATH` | Save path. Use a directory or a `.md` file path. | Current directory |
+| `-o, --output PATH` | Save path. Use a directory, `.html` file path, or `.md` file path. | Current directory |
+| `--format auto\|html\|markdown` | Output format. `auto` writes HTML for URL/HTML inputs and Markdown for other inputs. | `auto` |
 
 The standard `--help` and `--version` flags are also available.
 
 ## Output Format
 
-The output contains YAML frontmatter followed by the extracted Markdown body.
+URL and HTML inputs default to an HTML document with machine-readable metadata in the `<head>`, a visible metadata section at the top of `<body>`, raw source `meta`/JSON-LD preserved as JSON, and the cleaned article content in `<main>`.
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="mark2down">
+<title>Markdown - Wikipedia</title>
+<script type="application/json" id="mark2down-metadata-json">
+{
+  "metadata": {
+    "title": "Markdown - Wikipedia",
+    "source_url": "https://en.wikipedia.org/wiki/Markdown",
+    "domain": "en.wikipedia.org",
+    "word_count": 3658,
+    "generator": "mark2down"
+  },
+  "raw_meta": {},
+  "json_ld": []
+}
+</script>
+</head>
+<body>
+<section id="mark2down-metadata" aria-label="Document metadata">
+<h1>Document Metadata</h1>
+<dl>
+<dt>Title</dt><dd>Markdown - Wikipedia</dd>
+<dt>Source Url</dt><dd>https://en.wikipedia.org/wiki/Markdown</dd>
+</dl>
+</section>
+<main id="mark2down-content">
+<h1>Markdown</h1>
+<p>Markdown is a lightweight markup language...</p>
+</main>
+</body>
+</html>
+```
+
+Markdown output is still available with `--format markdown` or a `.md` output path. It contains YAML frontmatter followed by the extracted Markdown body.
 
 ```markdown
 ---
@@ -144,10 +192,11 @@ Markdown is a lightweight markup language...
 2. Infers the content type from URL/file metadata, MIME hints, magic bytes, or text structure.
 3. For URLs, loads the page with Playwright Chromium and waits for dynamic content to settle.
 4. Selects the most likely main content container and removes navigation, footer, cookie banners, comments, and related-content chrome.
-5. Converts PDF, DOCX, PPTX, XLSX, HTML, CSV, JSON, and JSONL into Markdown-oriented structure.
-6. Preserves tables as GitHub Flavored Markdown where that format is appropriate.
-7. Runs OCR opportunistically on rendered URL images and embedded document images.
-8. Writes a Markdown file with source metadata and normalized text.
+5. Converts URL/HTML sources into cleaned semantic HTML and keeps Markdown available on request.
+6. Converts PDF, DOCX, PPTX, XLSX, CSV, JSON, and JSONL into Markdown-oriented structure.
+7. Preserves tables as HTML tables or GitHub Flavored Markdown where that format is appropriate.
+8. Runs OCR opportunistically on rendered URL images and embedded document images.
+9. Writes an HTML or Markdown file with source metadata and normalized text.
 
 ## Known Limitations
 
@@ -156,7 +205,7 @@ Markdown is a lightweight markup language...
 - OCR currently uses macOS Vision through `ocrmac`; on unsupported systems OCR is skipped rather than failing the whole conversion.
 - XLS formulas are not evaluated by mark2down; XLSX output uses stored workbook values.
 - Highly visual layouts are converted into document structure, not preserved as visual layouts.
-- Site-specific page chrome may sometimes remain in the extracted Markdown.
+- Site-specific page chrome may sometimes remain in the extracted HTML or Markdown.
 
 ## License
 

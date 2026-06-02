@@ -1,7 +1,7 @@
 [project]
 name = "mark2down"
 version = "1.0.0"
-description = "Automatic URL, document, and stdin to Markdown converter with OCR and metadata"
+description = "Automatic URL, document, and stdin to LLM-ready HTML/Markdown converter with OCR and metadata"
 requires-python = ">=3.11"
 authors = [{ name = "mark2down" }]
 license = { text = "MIT" }

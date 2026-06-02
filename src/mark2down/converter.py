@@ -303,6 +303,20 @@ def _resolve_urls(scope: Tag, base_url: str) -> None:
             img["alt"] = ""
 
 
+def _strip_unsafe_attrs(scope: Tag) -> None:
+    for el in scope.find_all(True):
+        for attr in list(el.attrs):
+            attr_lc = attr.lower()
+            if attr_lc.startswith("on") or attr_lc in {"style", "srcdoc"}:
+                del el.attrs[attr]
+        for attr in ("href", "src"):
+            value = (el.get(attr) or "").strip().lower()
+            if value.startswith(("javascript:", "vbscript:")):
+                del el.attrs[attr]
+            if attr == "href" and value.startswith("data:"):
+                del el.attrs[attr]
+
+
 def _prune_empty(scope: Tag) -> None:
     """Remove elements that contain no text, no images, and no tables."""
     # Iterate leaves-first by converting generator to list copy.
@@ -378,7 +392,7 @@ def _prepend_page_heading_if_missing(working: BeautifulSoup, main: Tag) -> None:
         target.append(h1)
 
 
-def html_to_markdown(html: str, url: str) -> str:
+def _prepare_html(html: str, url: str) -> BeautifulSoup:
     soup = BeautifulSoup(html, "lxml")
 
     _strip_tags(soup, _STRIP_TAGS)
@@ -394,8 +408,25 @@ def html_to_markdown(html: str, url: str) -> str:
     _strip_noise_markers(working)
     _prepend_page_heading_if_missing(working, main)
     _resolve_urls(working, url)
+    _strip_unsafe_attrs(working)
     _prune_empty(working)
+    return working
 
+
+def _body_inner_html(soup: BeautifulSoup) -> str:
+    body = soup.find("body")
+    scope = body if isinstance(body, Tag) else soup
+    return "\n".join(str(child) for child in scope.contents).strip()
+
+
+def html_to_clean_html(html: str, url: str) -> str:
+    """Return the cleaned main-content HTML fragment used for rich HTML output."""
+    clean_html = _body_inner_html(_prepare_html(html, url))
+    return clean_html.strip() + "\n" if clean_html.strip() else ""
+
+
+def html_to_markdown(html: str, url: str) -> str:
+    working = _prepare_html(html, url)
     tables_md = replace_tables_with_placeholders(working)
 
     md = to_md(
