@@ -62,8 +62,9 @@ uv tool upgrade mark2down
 uv tool uninstall mark2down
 ```
 
-`m2d update` upgrades the installed `mark2down` tool with `uv` and then prunes
-unused `uv` cache entries and cached environments.
+`m2d update` runs `uv tool upgrade mark2down` and then prunes unused `uv` cache
+entries and cached environments. If an older installed copy treats `update` as a
+file path, run `uv tool upgrade mark2down` once, then use `m2d update` after that.
 
 ## Usage
 

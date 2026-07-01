@@ -205,10 +205,7 @@ def _update_mark2down() -> None:
         )
 
     console.log(f"[bold cyan]Updating[/] {UPDATE_TOOL_NAME}")
-    _run_uv_command(
-        uv_executable,
-        ["tool", "upgrade", "--reinstall", UPDATE_TOOL_NAME],
-    )
+    _run_uv_command(uv_executable, ["tool", "upgrade", UPDATE_TOOL_NAME])
 
     console.log("[bold cyan]Cleaning[/] unused uv cache entries")
     _run_uv_command(uv_executable, ["cache", "prune"])

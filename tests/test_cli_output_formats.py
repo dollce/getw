@@ -159,7 +159,7 @@ class CliOutputFormatTests(unittest.TestCase):
         self.assertEqual(
             commands,
             [
-                ["uv", "tool", "upgrade", "--reinstall", "mark2down"],
+                ["uv", "tool", "upgrade", "mark2down"],
                 ["uv", "cache", "prune"],
             ],
         )
@@ -193,7 +193,7 @@ class CliOutputFormatTests(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertEqual(
             commands,
-            [["uv", "tool", "upgrade", "--reinstall", "mark2down"]],
+            [["uv", "tool", "upgrade", "mark2down"]],
         )
         self.assertIn("uv tool upgrade", result.output)
 
