@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -35,6 +38,7 @@ console = Console(stderr=True)
 DEFAULT_WAIT_SECONDS = 3.0
 DEFAULT_TIMEOUT_SECONDS = 60
 DEFAULT_OCR_MAX_IMAGES = 20
+UPDATE_TOOL_NAME = "mark2down"
 _FORMAT_EXTENSIONS = {
     "markdown": ".md",
     "html": ".html",
@@ -182,15 +186,71 @@ def _html_document(result: object, source: str) -> str:
     )
 
 
-@click.command(
+def _format_command(command: Sequence[str]) -> str:
+    return subprocess.list2cmdline(command)
+
+
+def _run_uv_command(uv_executable: str, args: Sequence[str]) -> None:
+    command = [uv_executable, *args]
+    result = subprocess.run(command)
+    if result.returncode:
+        raise click.ClickException(f"`{_format_command(command)}` failed.")
+
+
+def _update_mark2down() -> None:
+    uv_executable = shutil.which("uv")
+    if uv_executable is None:
+        raise click.ClickException(
+            "m2d update requires uv. Install uv first, then run `m2d update` again."
+        )
+
+    console.log(f"[bold cyan]Updating[/] {UPDATE_TOOL_NAME}")
+    _run_uv_command(uv_executable, ["tool", "upgrade", UPDATE_TOOL_NAME])
+
+    console.log("[bold cyan]Cleaning[/] unused uv cache entries")
+    _run_uv_command(uv_executable, ["cache", "prune"])
+
+    console.log(f"[bold green]Updated[/] {UPDATE_TOOL_NAME}")
+
+
+class Mark2DownGroup(click.Group):
+    """Route bare converter invocations to the convert command."""
+
+    default_command = "convert"
+    root_options = {"-h", "--help", "-V", "--version"}
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        if args and args[0] not in self.commands and args[0] not in self.root_options:
+            args = [self.default_command, *args]
+        return super().parse_args(ctx, args)
+
+
+EXAMPLES = (
+    "\b\nExamples:\n"
+    "  m2d https://example.com/post\n"
+    "  m2d ./report.pdf -o ./notes\n"
+    "  m2d https://example.com/post --format markdown\n"
+    "  cat data.csv | m2d -o ./notes/data.md"
+)
+
+
+@click.group(
+    cls=Mark2DownGroup,
+    invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
-    epilog=(
-        "\b\nExamples:\n"
-        "  m2d https://example.com/post\n"
-        "  m2d ./report.pdf -o ./notes\n"
-        "  m2d https://example.com/post --format markdown\n"
-        "  cat data.csv | m2d -o ./notes/data.md"
-    ),
+)
+@click.version_option(__version__, "-V", "--version", prog_name="mark2down")
+@click.pass_context
+def main(ctx: click.Context) -> None:
+    """Convert sources or manage the installed mark2down tool."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(convert)
+
+
+@main.command(
+    "convert",
+    context_settings={"help_option_names": ["-h", "--help"]},
+    epilog=EXAMPLES,
 )
 @click.version_option(__version__, "-V", "--version", prog_name="mark2down")
 @click.argument("source", required=False)
@@ -210,7 +270,7 @@ def _html_document(result: object, source: str) -> str:
     show_default=True,
     help="Output format. Auto writes HTML for URL/HTML inputs and Markdown for other inputs.",
 )
-def main(
+def convert(
     source: str | None,
     output: Path | None,
     output_format: str,
@@ -294,6 +354,12 @@ def main(
     )
     target.write_text(final_output, encoding="utf-8")
     log(f"[bold green]Saved[/] {target}")
+
+
+@main.command("update", context_settings={"help_option_names": ["-h", "--help"]})
+def update() -> None:
+    """Upgrade mark2down and prune unused uv cache entries."""
+    _update_mark2down()
 
 
 if __name__ == "__main__":

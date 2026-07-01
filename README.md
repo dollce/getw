@@ -57,9 +57,14 @@ uv tool install --reinstall .
 ### Upgrade or Remove
 
 ```bash
+m2d update
 uv tool upgrade mark2down
 uv tool uninstall mark2down
 ```
+
+`m2d update` runs `uv tool upgrade mark2down` and then prunes unused `uv` cache
+entries and cached environments. If an older installed copy treats `update` as a
+file path, run `uv tool upgrade mark2down` once, then use `m2d update` after that.
 
 ## Usage
 
