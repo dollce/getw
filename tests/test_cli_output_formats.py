@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -140,6 +141,61 @@ class CliOutputFormatTests(unittest.TestCase):
 
             self.assertNotEqual(result.exit_code, 0)
             self.assertIn("HTML output is only supported", result.output)
+
+    def test_update_upgrades_tool_then_prunes_uv_cache(self) -> None:
+        runner = CliRunner()
+        commands: list[list[str]] = []
+
+        def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch("mark2down.cli.shutil.which", return_value="uv"), patch(
+            "mark2down.cli.subprocess.run", side_effect=run_command
+        ):
+            result = runner.invoke(main, ["update"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(
+            commands,
+            [
+                ["uv", "tool", "upgrade", "--reinstall", "mark2down"],
+                ["uv", "cache", "prune"],
+            ],
+        )
+        self.assertIn("Updated", result.output)
+
+    def test_update_requires_uv(self) -> None:
+        runner = CliRunner()
+
+        with patch("mark2down.cli.shutil.which", return_value=None), patch(
+            "mark2down.cli.subprocess.run"
+        ) as run:
+            result = runner.invoke(main, ["update"])
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("requires uv", result.output)
+        run.assert_not_called()
+
+    def test_update_does_not_prune_when_upgrade_fails(self) -> None:
+        runner = CliRunner()
+        commands: list[list[str]] = []
+
+        def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 1)
+
+        with patch("mark2down.cli.shutil.which", return_value="uv"), patch(
+            "mark2down.cli.subprocess.run", side_effect=run_command
+        ):
+            result = runner.invoke(main, ["update"])
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertEqual(
+            commands,
+            [["uv", "tool", "upgrade", "--reinstall", "mark2down"]],
+        )
+        self.assertIn("uv tool upgrade", result.output)
 
 
 if __name__ == "__main__":
