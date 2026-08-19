@@ -9,6 +9,7 @@ dist/
 
 # Virtualenvs
 .venv/
+.verify-venv/
 venv/
 env/
 
@@ -18,6 +19,8 @@ pip-wheel-metadata/
 
 # Tooling caches
 .pytest_cache/
+.pytest-tmp/
+pytest-cache-files-*/
 .mypy_cache/
 .ruff_cache/
 .coverage

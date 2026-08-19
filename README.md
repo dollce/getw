@@ -1,216 +1,245 @@
-# mark2down
+# getw
 
-`mark2down` turns web pages, HTML, local files, `file:`/`data:` URIs, and piped input into LLM-ready HTML or Markdown.
+`getw` turns a web page into a source-grounded semantic document and derives
+LLM-ready text from that document.
 
-The CLI is intentionally small: give it input, and it chooses the best available extraction path automatically. Browser rendering, document parsing, table preservation, rich metadata, file-type detection, and OCR are handled by default.
-
-```bash
-m2d https://example.com
-# Creates a rich HTML file in the current directory.
+```powershell
+getw https://example.com/article
 ```
 
-## Why Use It?
+The default output is compact Markdown on stdout. It keeps headings, lists,
+quotes, code, tables, and essential provenance without carrying the token cost
+of raw HTML or a full JSON AST.
 
-- Archive web articles, docs, wiki pages, and blog posts as rich HTML or Markdown.
-- Convert PDF, DOCX, PPTX, XLSX, HTML, Markdown, plain text, CSV, JSON, and JSONL.
-- Accept `http:`, `https:`, `file:`, and `data:` sources plus stdin.
-- Preserve source metadata in HTML metadata blocks or YAML frontmatter.
-- Preserve complex tables as HTML tables or GitHub Flavored Markdown where possible.
-- Run OCR automatically when image text can improve the output.
+## Design in one minute
+
+`getw` separates four concerns:
+
+1. Load the source with verified static HTTP first.
+2. When static extraction looks like a JavaScript shell, optionally render the
+   page with Playwright and wait for meaningful DOM stability.
+3. Use Trafilatura to select the main content and normalize its structure into
+   getw's versioned, provider-neutral document tree.
+4. Deterministically lower that tree to compact Markdown, regular Markdown,
+   plain grounding text, or lossless normalized JSON.
+
+No LLM is called during normal extraction. Optional semantic enrichment is a
+separate, explicit operation and never replaces the structural document.
+
+See [the architecture notes](docs/architecture.md) for the complete rationale.
 
 ## Install
 
-Install the command globally with [`uv`](https://docs.astral.sh/uv/):
+Install the core static extractor:
 
-```bash
-uv tool install git+https://github.com/dollce/mark2down.git
+```powershell
+uv tool install "getw @ git+https://github.com/dollce/getw.git"
 ```
 
-Check the installed command:
+Install browser rendering support for JavaScript-heavy pages:
 
-```bash
-which m2d
-m2d --version
+```powershell
+uv tool install "getw[browser] @ git+https://github.com/dollce/getw.git"
+python -m playwright install chromium
 ```
 
-If `which m2d` prints nothing, add `~/.local/bin` to your shell `PATH`.
+`getw` also tries an installed Chrome or Edge channel when Playwright's pinned
+Chromium is unavailable.
 
-For zsh:
+For local development:
 
-```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
+```powershell
+git clone https://github.com/dollce/getw.git
+cd getw
+uv sync --extra browser --extra test
 ```
 
-For bash, add the same export line to `~/.bashrc` or `~/.bash_profile`.
+Optional source-grounded LLM enrichment uses a separate extra:
 
-### Install From a Local Checkout
-
-Use this when developing the project locally or testing unpublished changes:
-
-```bash
-git clone https://github.com/dollce/mark2down.git
-cd mark2down
-uv tool install --reinstall .
+```powershell
+uv sync --extra semantic
 ```
 
-### Upgrade or Remove
+## CLI
 
-```bash
-m2d update
-uv tool upgrade mark2down
-uv tool uninstall mark2down
+The default path writes compact LLM input to stdout:
+
+```powershell
+getw https://example.com/article
 ```
 
-`m2d update` runs `uv tool upgrade mark2down` and then prunes unused `uv` cache
-entries and cached environments. If an older installed copy treats `update` as a
-file path, run `uv tool upgrade mark2down` once, then use `m2d update` after that.
+Choose a deterministic output projection without fetching the page again:
 
-## Usage
-
-Save a web page to the current directory as rich HTML:
-
-```bash
-m2d https://example.com
+```powershell
+getw https://example.com/article --format markdown
+getw https://example.com/article --format plain
+getw https://example.com/article --format json --pretty
 ```
 
-Save a web page as Markdown instead:
+Control acquisition when reproducibility or a specific page requires it:
 
-```bash
-m2d https://example.com --format markdown
+```powershell
+# Never launch a browser
+getw https://example.com/article --render static
+
+# Require a browser-rendered DOM
+getw https://example.com/app --render browser
+
+# Require a meaningful element before DOM stability is evaluated
+getw https://example.com/app --wait-for "main article"
+
+# Use an installed system browser channel
+getw https://example.com/app --browser-channel chrome
 ```
 
-Save to a specific directory:
+Read supplied HTML explicitly. A plain Python/CLI string is never guessed to be
+HTML:
 
-```bash
-m2d https://example.com -o ~/notes/web
+```powershell
+getw .\page.html --html --base-url https://example.com/ --format markdown
+Get-Content .\page.html -Raw | getw - --html --base-url https://example.com/
 ```
 
-Save to a specific HTML or Markdown file:
+Save any output projection:
 
-```bash
-m2d https://example.com -o ~/notes/example.html
-m2d https://example.com -o ~/notes/example.md
+```powershell
+getw https://example.com/article --format json -o article.getw.json
 ```
 
-Convert local documents:
+Diagnostics and warnings go to stderr; extracted content goes to stdout. Add
+`--verbose` to see every static/browser attempt, selection reason, duration,
+character count, and quality score.
 
-```bash
-m2d ./report.pdf
-m2d ./brief.docx
-m2d ./deck.pptx
-m2d ./workbook.xlsx
+## Python API
+
+The common path has one function and one stable return type:
+
+```python
+import getw
+
+document = getw.extract("https://example.com/article")
+llm_input = document.text
 ```
 
-Convert structured text:
+HTML is explicit, so it cannot be mistaken for a URL:
 
-```bash
-m2d ./report.html
-m2d ./report.html --format markdown
-m2d ./payload.json
-cat data.csv | m2d -o ./data.md
-cat events.jsonl | m2d -o ./events.md
+```python
+document = getw.extract(
+    getw.Html(
+        html_source,
+        base_url="https://example.com/article",
+    )
+)
 ```
 
-Convert URI-style sources:
+One extraction can be lowered repeatedly:
 
-```bash
-m2d file:///tmp/report.html
-m2d 'data:text/csv,name%2Cscore%0Aalpha%2C10'
+```python
+compact = document.render("compact")  # essential provenance + compact Markdown
+markdown = document.render("markdown")
+plain = document.render("plain")      # stable LangExtract grounding string
+full_ir = document.to_json(indent=2)   # normalized structure + diagnostics
+
+restored = getw.Document.from_json(full_ir)
+assert restored == document
 ```
 
-## Options
+The async facade runs the same contract without blocking an asyncio caller:
 
-`m2d` has these output options:
-
-| Option | Description | Default |
-|---|---|---|
-| `-o, --output PATH` | Save path. Use a directory, `.html` file path, or `.md` file path. | Current directory |
-| `--format auto\|html\|markdown` | Output format. `auto` writes HTML for URL/HTML inputs and Markdown for other inputs. | `auto` |
-
-The standard `--help` and `--version` flags are also available.
-
-## Output Format
-
-URL and HTML inputs default to an HTML document with machine-readable metadata in the `<head>`, a visible metadata section at the top of `<body>`, raw source `meta`/JSON-LD preserved as JSON, and the cleaned article content in `<main>`.
-
-```html
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="generator" content="mark2down">
-<title>Markdown - Wikipedia</title>
-<script type="application/json" id="mark2down-metadata-json">
-{
-  "metadata": {
-    "title": "Markdown - Wikipedia",
-    "source_url": "https://en.wikipedia.org/wiki/Markdown",
-    "domain": "en.wikipedia.org",
-    "word_count": 3658,
-    "generator": "mark2down"
-  },
-  "raw_meta": {},
-  "json_ld": []
-}
-</script>
-</head>
-<body>
-<section id="mark2down-metadata" aria-label="Document metadata">
-<h1>Document Metadata</h1>
-<dl>
-<dt>Title</dt><dd>Markdown - Wikipedia</dd>
-<dt>Source Url</dt><dd>https://en.wikipedia.org/wiki/Markdown</dd>
-</dl>
-</section>
-<main id="mark2down-content">
-<h1>Markdown</h1>
-<p>Markdown is a lightweight markup language...</p>
-</main>
-</body>
-</html>
+```python
+document = await getw.aextract(url, render="auto")
 ```
 
-Markdown output is still available with `--format markdown` or a `.md` output path. It contains YAML frontmatter followed by the extracted Markdown body.
+Advanced callers can retain a configured `Extractor` and inject alternative
+loaders without changing the public `Document` model:
 
-```markdown
----
-title: Markdown - Wikipedia
-source_url: https://en.wikipedia.org/wiki/Markdown
-canonical_url: https://en.wikipedia.org/wiki/Markdown
-domain: en.wikipedia.org
-language: en
-word_count: 3658
-char_count: 35309
-reading_time_min: 17
-generator: mark2down
----
-
-# Markdown
-
-Markdown is a lightweight markup language...
+```python
+config = getw.ExtractionConfig(
+    load_mode="auto",
+    wait_for="main article",
+    timeout=20,
+)
+extractor = getw.Extractor(config)
+document = extractor.extract(url)
 ```
 
-## How It Works
+## Optional semantic enrichment
 
-1. Detects whether the input is a URL, local file, `file:` URI, `data:` URI, or stdin.
-2. Infers the content type from URL/file metadata, MIME hints, magic bytes, or text structure.
-3. For URLs, loads the page with Playwright Chromium and waits for dynamic content to settle.
-4. Selects the most likely main content container and removes navigation, footer, cookie banners, comments, and related-content chrome.
-5. Converts URL/HTML sources into cleaned semantic HTML and keeps Markdown available on request.
-6. Converts PDF, DOCX, PPTX, XLSX, CSV, JSON, and JSONL into Markdown-oriented structure.
-7. Preserves tables as HTML tables or GitHub Flavored Markdown where that format is appropriate.
-8. Runs OCR opportunistically on rendered URL images and embedded document images.
-9. Writes an HTML or Markdown file with source metadata and normalized text.
+Structural web extraction and domain-specific fact extraction are different
+problems. `getw` therefore keeps LLM enrichment opt-in:
 
-## Known Limitations
+```python
+import getw
 
-- Interactive bot challenges such as Cloudflare Turnstile or Akamai challenges cannot be solved automatically.
-- Private pages that require login may not be extractable from a fresh headless browser session.
-- OCR currently uses macOS Vision through `ocrmac`; on unsupported systems OCR is skipped rather than failing the whole conversion.
-- XLS formulas are not evaluated by mark2down; XLSX output uses stored workbook values.
-- Highly visual layouts are converted into document structure, not preserved as visual layouts.
-- Site-specific page chrome may sometimes remain in the extracted HTML or Markdown.
+document = getw.extract("https://example.com/news")
+
+task = getw.SemanticTask(
+    instruction="Extract organizations exactly as written in the source.",
+    model_id="gemini-3.5-flash",
+    examples=(
+        getw.SemanticExample(
+            text="Acme announced a new product.",
+            extractions=(
+                getw.SemanticExtraction("organization", "Acme"),
+            ),
+        ),
+    ),
+)
+
+enriched = getw.enrich(document, task)
+annotation = enriched.annotations[0]
+print(annotation.text, annotation.targets)
+```
+
+The adapter passes one stable plain-text projection to LangExtract. Returned
+character intervals are mapped back to getw node-local ranges. Ungrounded model
+output is dropped by default. The original structural IR remains unchanged.
+
+## Output contracts
+
+### `compact`
+
+The default LLM representation. It includes the final source URL and useful
+metadata, preserves block semantics with minimal Markdown, and omits repeated
+inline link targets. It never summarizes, rewrites, or silently truncates.
+
+### `markdown`
+
+The extracted body as interoperable Markdown. Link targets are retained.
+Headerless source tables use fenced TSV rather than inventing a header row.
+
+### `plain`
+
+A stable text sequence used for source grounding. It intentionally has fewer
+structural cues than Markdown.
+
+### `json`
+
+The versioned normalized document, metadata, semantic annotations, notices,
+and load attempts. It is lossless with respect to getw's selected/normalized
+content, not a byte-for-byte archive of the original HTTP response.
+
+## What `auto` rendering means
+
+`auto` starts with static HTTP. It escalates only when extraction is empty or a
+versioned shell signal is present (for example an empty React/Next/Nuxt root,
+bundled-script shell, or explicit `--wait-for` selector).
+
+Browser loading waits for `DOMContentLoaded`, then either the requested visible
+selector or a stable signature of visible text and DOM node count. It does not
+use a fixed sleep and does not depend on `networkidle`. Every attempted path and
+the selected path are recorded in the result.
+
+If an obvious empty shell needs rendering but no browser capability exists,
+getw fails with an installation hint instead of emitting `Loading...` as page
+content. Interactive login and CAPTCHA challenges are not bypassed.
+
+## Scope
+
+Version 2 is intentionally a web text extractor. The earlier PDF, DOCX, PPTX,
+XLSX, OCR, and general file-conversion code was removed rather than carried into
+an unrelated core. Supplied HTML remains supported because it is the replay and
+integration boundary for authenticated or externally automated pages.
 
 ## License
 
